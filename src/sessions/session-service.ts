@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
 import { priceFor, type TitleKind } from '../pricing';
-import { getBalance } from '../tokens/ledger';
+import { debit, getBalance, InsufficientBalance } from '../tokens/ledger';
 import { verifyPin } from '../tokens/token-service';
 import { CHUNK_SIZE } from '../download/chunks';
 
@@ -99,4 +99,49 @@ export function confirmOffset(db: Database.Database, sessionId: string, offset: 
     );
     return { ok: true, bytesConfirmed: offset };
   })();
+}
+
+export type CompleteResult =
+  | { ok: true; chargedUgx: number }
+  | { ok: false; reason: 'not_active' | 'incomplete' | 'checksum_mismatch' | 'insufficient_balance' };
+
+export function completeSession(
+  db: Database.Database,
+  sessionId: string,
+  finalChecksum: string,
+  now: Date,
+): CompleteResult {
+  return db.transaction((): CompleteResult => {
+    const row = db
+      .prepare(
+        `select s.status, s.bytes_confirmed, s.expected_size, s.file_checksum, s.price_ugx, t.token_number
+           from sessions s join tokens t on t.id = s.token_id where s.id = ?`,
+      )
+      .get(sessionId) as
+      | {
+          status: string;
+          bytes_confirmed: number;
+          expected_size: number;
+          file_checksum: string;
+          price_ugx: number;
+          token_number: string;
+        }
+      | undefined;
+    if (!row || row.status !== 'active') return { ok: false, reason: 'not_active' };
+    if (row.bytes_confirmed !== row.expected_size) return { ok: false, reason: 'incomplete' };
+    if (finalChecksum !== row.file_checksum) return { ok: false, reason: 'checksum_mismatch' };
+
+    try {
+      debit(db, row.token_number, row.price_ugx, sessionId);
+    } catch (err) {
+      if (err instanceof InsufficientBalance) return { ok: false, reason: 'insufficient_balance' };
+      throw err;
+    }
+
+    db.prepare("update sessions set status = 'complete', last_activity_at = ? where id = ?").run(
+      now.toISOString(),
+      sessionId,
+    );
+    return { ok: true, chargedUgx: row.price_ugx };
+  }).immediate();
 }
