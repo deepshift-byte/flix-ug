@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FLIX-UG Phone Download</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; max-width: 480px; }
+    h1 { font-size: 22px; }
+    input, button { font-size: 16px; padding: 10px; width: 100%; box-sizing: border-box; margin: 6px 0; }
+    #status { margin-top: 12px; white-space: pre-wrap; }
+    #save { display: inline-block; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>FLIX-UG</h1>
+  <form id="form">
+    <input id="token" placeholder="Token number" autocomplete="off" required>
+    <input id="pin" placeholder="PIN" inputmode="numeric" autocomplete="off" required>
+    <input id="title" placeholder="Title ID" autocomplete="off" required>
+    <button type="submit">Download</button>
+  </form>
+  <div id="status" role="status"></div>
+  <a id="save" hidden>Save file</a>
+
+  <script type="module">
+    import { assemble, downloadChunks, indexedDbStore } from './assemble.js';
+
+    // Must match the server's chunk size (4 MiB).
+    const CHUNK_SIZE = 4 * 1024 * 1024;
+    const SESSION_KEY = 'flix-phone-session';
+    const store = indexedDbStore();
+    const $ = (id) => document.getElementById(id);
+    const say = (text) => { $('status').textContent = text; };
+
+    const messages = {
+      bad_pin: 'The PIN is wrong.',
+      unknown_token: 'That token number is not recognised.',
+      unknown_title: 'That title is not available.',
+      locked: 'Too many wrong PINs. Try again in 15 minutes.',
+      insufficient_balance: 'Not enough balance on this token. Please see the attendant to top up.',
+      active_session_exists: 'This token is already downloading somewhere else.',
+    };
+
+    function rememberSession(id) { try { localStorage.setItem(SESSION_KEY, id); } catch {} }
+    function recalledSession() { try { return localStorage.getItem(SESSION_KEY); } catch { return null; } }
+    function forgetSession() { try { localStorage.removeItem(SESSION_KEY); } catch {} }
+
+    async function readJson(res) { return res.json().catch(() => ({})); }
+
+    async function fetchChunk(sessionId, index, link) {
+      const res = await fetch(`/sessions/${sessionId}/chunks/${index}?exp=${link.exp}&sig=${link.sig}`);
+      if (!res.ok) throw new Error(`chunk ${index} returned ${res.status}`);
+      return res.arrayBuffer();
+    }
+
+    async function confirm(sessionId, offset) {
+      await fetch(`/sessions/${sessionId}/confirm`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ offset }),
+      });
+    }
+
+    async function run(info, titleId) {
+      const { sessionId, fileSize, chunkHashes, fileChecksum, links } = info;
+      const chunkCount = chunkHashes.length;
+      rememberSession(sessionId);
+      say('Downloading… keep this page open. Progress is saved, so you can come back later.');
+
+      const result = await downloadChunks(store, {
+        sessionId, chunkCount, chunkHashes, links, fileSize, chunkSize: CHUNK_SIZE,
+        fetchChunk: (index, link) => fetchChunk(sessionId, index, link),
+        confirm: (offset) => confirm(sessionId, offset),
+      });
+      if (!result.ok) {
+        say(`Paused (${result.reason}). Nothing has been charged. Reopen this page to continue.`);
+        return;
+      }
+
+      const assembled = await assemble(store, sessionId, chunkCount, fileChecksum);
+      if (!assembled.ok) {
+        say(`The file could not be checked (${assembled.reason}). Nothing has been charged.`);
+        return;
+      }
+
+      const done = await fetch(`/sessions/${sessionId}/complete`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ checksum: fileChecksum }),
+      });
+      if (!done.ok) {
+        say(`Not charged: ${(await readJson(done)).reason}`);
+        return;
+      }
+
+      await store.clear(`${sessionId}:`);
+      forgetSession();
+      const link = $('save');
+      link.href = URL.createObjectURL(assembled.blob);
+      link.download = titleId;
+      link.hidden = false;
+      say('Done. Tap "Save file" to keep it on your phone.');
+    }
+
+    $('form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const titleId = $('title').value.trim();
+      const res = await fetch('/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          tokenNumber: $('token').value.trim(),
+          pin: $('pin').value.trim(),
+          titleId,
+          destination: 'phone',
+        }),
+      });
+      const data = await readJson(res);
+      if (!res.ok) {
+        say(messages[data.reason] ?? `Could not start the download (${data.reason ?? res.status}).`);
+        return;
+      }
+      await run(data, titleId);
+    });
+
+    // Reopening the page resumes an unfinished download.
+    const pending = recalledSession();
+    if (pending) {
+      fetch(`/sessions/${pending}`).then(readJson).then((data) => {
+        if (data.status === 'active') run(data, 'movie.mp4');
+        else forgetSession();
+      });
+    }
+  </script>
+</body>
+</html>
