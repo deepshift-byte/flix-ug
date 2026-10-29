@@ -106,6 +106,8 @@ export async function downloadChunks(store, opts) {
     if (!stored) return { ok: false, reason: 'hash_failed' };
     await confirm(Math.min((index + 1) * chunkSize, fileSize));
   }
+  // Re-confirm the full size: a confirm lost after the last chunk would otherwise stall the server at fileSize - chunk.
+  if (chunkCount > 0) await confirm(fileSize);
   return { ok: true };
 }
 

@@ -77,3 +77,27 @@ describe('clearing a finished session', () => {
     expect(await store.keys('s2:')).toEqual(['s2:000000']);
   });
 });
+
+describe('confirmation after a finished download', () => {
+  it('re-confirms the full size even when every chunk was already stored, so a lost confirm is recoverable', async () => {
+    const store = memoryStore();
+    for (let i = 0; i < chunkCount; i++) await storeChunk(store, 's1', i, chunkBytes(i).buffer, hashes[i]);
+    const offsets: number[] = [];
+    const result = await downloadChunks(store, {
+      sessionId: 's1',
+      chunkCount,
+      fileSize: content.length,
+      chunkSize: CHUNK,
+      chunkHashes: hashes,
+      links,
+      fetchChunk: async () => {
+        throw new Error('nothing should be fetched');
+      },
+      confirm: async (offset) => {
+        offsets.push(offset);
+      },
+    });
+    expect(result).toEqual({ ok: true });
+    expect(offsets).toEqual([content.length]);
+  });
+});
