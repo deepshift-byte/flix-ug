@@ -77,3 +77,26 @@ export function expireAbandoned(db: Database.Database, now: Date): number {
     .run(cutoff);
   return result.changes;
 }
+
+export type ConfirmResult =
+  | { ok: true; bytesConfirmed: number }
+  | { ok: false; reason: 'not_active' | 'offset_backwards' | 'offset_past_end' };
+
+export function confirmOffset(db: Database.Database, sessionId: string, offset: number, now: Date): ConfirmResult {
+  if (!Number.isInteger(offset) || offset < 0) throw new RangeError(`offset must be a non-negative integer, got ${offset}`);
+  return db.transaction((): ConfirmResult => {
+    const row = db
+      .prepare('select status, expected_size, bytes_confirmed from sessions where id = ?')
+      .get(sessionId) as { status: string; expected_size: number; bytes_confirmed: number } | undefined;
+    if (!row || row.status !== 'active') return { ok: false, reason: 'not_active' };
+    if (offset < row.bytes_confirmed) return { ok: false, reason: 'offset_backwards' };
+    if (offset > row.expected_size) return { ok: false, reason: 'offset_past_end' };
+
+    db.prepare('update sessions set bytes_confirmed = ?, last_activity_at = ? where id = ?').run(
+      offset,
+      now.toISOString(),
+      sessionId,
+    );
+    return { ok: true, bytesConfirmed: offset };
+  })();
+}
