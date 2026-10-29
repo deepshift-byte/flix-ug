@@ -17,9 +17,11 @@ Build: `c1f21ff` or later. Scratch harness (not committed): `.superpowers/smoke/
 | 6 | Android, full download with a dropped connection | Emulated: Chromium with a Pixel 5 profile; one chunk connection aborted; reload | **PASS** (6a–6f): paused with message, nothing charged, resumed on reload, one charge, file matches, no page errors | Android hardware, real Wi-Fi |
 | 7 | iOS Safari, full download | **Not run**: no iOS device, no WebKit in this environment | — | Everything |
 | 8 | Phone with low free storage | Emulated: IndexedDB writes refused (QuotaExceededError); space "freed" and the page reopened | **PASS** (8a–8d) after one product fix (see below) | Real phone storage limits |
-| 9 | Memory on a low-end phone assembling a large movie | **Not run**: no device. The streaming hash is verified for correctness only (79/79 tests) | — | A measured run with a large movie |
+| 9 | Memory on a low-end phone assembling a large movie | Emulated on this machine (not a low-end phone): Chromium, Pixel 5 viewport. A 512 MB movie reached ready in 28 s; the JS heap grew at most ~125 MB, so the file is not held in JavaScript memory. A 1.2 GB movie **paused with storage_full** at about 0.8–1 GB of stored chunks, with nothing charged | **Partial.** Memory is fine at 512 MB; **large movies hit the browser storage limit** | Real phone storage limits; the large-movie delivery decision (see Findings) |
 
 ## Findings from this run
+
+- **Open decision: large movies on phones.** A 1.2 GB movie cannot be stored as chunks in this browser before it pauses with storage_full. The pause is safe (nothing charged, resumable), but the movie cannot complete on the phone.
 
 - **Fixed:** after a storage-full pause, resubmitting the form was refused with "already downloading somewhere else", although the paused download belonged to this device. The page now resumes the device's own unfinished session. The server still refuses any second start.
 - **Fixed:** the phone assembled the whole movie in memory to hash it. It now hashes one 4 MB chunk at a time (incremental SHA-256), and chunks are stored as Blobs. Correctness is tested; the memory benefit on a real phone is not yet measured (item 9).
