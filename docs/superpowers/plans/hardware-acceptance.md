@@ -1,30 +1,29 @@
 # FLIX-UG Hardware Acceptance Checklist
 
 Plan: `docs/superpowers/plans/2026-10-29-flix-ug-token-download-engine.md` (Task 14).
-Build under test: branch `main`, last commit `748e2bf` or later.
+Build: `c1f21ff` or later. Scratch harness (not committed): `.superpowers/smoke/` (`scenarios.mjs`, `kiosk-run.mjs`, `browser2.cjs`).
 
-Status key: **Done (software)** = verified here without hardware; **Pending (hardware)** = must run on real equipment before rollout.
+**Important:** no physical flash disks, phones or power cuts were available. Each item below says exactly what was run. "Simulated" and "emulated" results do **not** replace the real-hardware check.
 
-## Verified in software (this session)
+## Results
 
-| Scenario | Result |
-|---|---|
-| Full HTTP flow on the compiled server: start, three chunks (last one short), confirm, complete; bytes match source; charged once | Done (software) |
-| Phone page in Chromium: download, reload-resume, save, "Saved, finish", storage cleared, no page errors | Done (software) |
-| Pricing, PIN lockout, ledger idempotency, one active session per token, abandonment, last-chunk payment, completion | Done (software, 76 automated tests) |
-| Kiosk resume after an in-process "power cut" (journal and partial file left on disk) | Done (software; simulated) |
+| # | Scenario | What was run | Result | Still needs real hardware |
+|---|---|---|---|---|
+| 1 | Flash disk pulled mid-copy, then reinserted | Simulated: kiosk process SIGKILLed after chunk 1, disk lazily unmounted, remounted on a 32 MB loop-mounted ext4 disk, kiosk restarted | **PASS** (1a–1e): resumed at chunk 1, file matches source, charged once | Real USB stick removal |
+| 2 | Power cut during a kiosk transfer | Simulated: process SIGKILLed mid-chunk 2; partial file holds exactly 8 MB; restart fetched only chunk 2 | **PASS** (2a–2e) | A real power cut. SIGKILL does not test whether fsync survives power loss |
+| 3 | Power cut after complete, before rename | Simulated: process SIGKILLed after the server returned complete | **PASS** (3a–3c): rename finished, no second fetch, no second charge | Real power cut |
+| 4 | Flash disk too small | Real: 8 MB ext4 loop disk with about 3 MB free | **PASS** (4a–4c): `insufficient_space`, no partial file, session abandoned, nothing charged | The kernel's own disk-full error path (the free-space check refused first) |
+| 5 | Two kiosks spend one token at once | Real HTTP: two simultaneous start requests to the live server | **PASS**: one 200, one 409 | Two physical kiosks |
+| 6 | Android, full download with a dropped connection | Emulated: Chromium with a Pixel 5 profile; one chunk connection aborted; reload | **PASS** (6a–6f): paused with message, nothing charged, resumed on reload, one charge, file matches, no page errors | Android hardware, real Wi-Fi |
+| 7 | iOS Safari, full download | **Not run**: no iOS device, no WebKit in this environment | — | Everything |
+| 8 | Phone with low free storage | Emulated: IndexedDB writes refused (QuotaExceededError); space "freed" and the page reopened | **PASS** (8a–8d) after one product fix (see below) | Real phone storage limits |
+| 9 | Memory on a low-end phone assembling a large movie | **Not run**: no device. The streaming hash is verified for correctness only (79/79 tests) | — | A measured run with a large movie |
 
-## Pending (hardware)
+## Findings from this run
 
-- [ ] **Flash disk pulled mid-copy, then reinserted.** Expect: copy resumes from the confirmed offset, no double charge, no lost bytes.
-- [ ] **Real power cut during a kiosk transfer** (USB stick and PC). Expect: journal and `.part` recover on restart; the file is correct; the balance is charged once.
-- [ ] **Power cut after "complete" but before the rename.** Expect: restart finishes the rename without charging.
-- [ ] **Flash disk too small for the movie.** Expect: `insufficient_space`, no `.part` left, session abandoned, balance unchanged.
-- [ ] **Two kiosks spending one token at the same moment.** Expect: one succeeds, the other gets `active_session_exists`.
-- [ ] **Android phone, full download over shop Wi-Fi**, including a dropped connection mid-way and a reopen. Expect: resume, one charge at the last chunk.
-- [ ] **iOS Safari phone, full download.** Expect: completes, or is documented as a limitation (spec section 9 risk). Record the storage limit reached.
-- [ ] **Phone with low free storage.** Expect: a clear message, resumable after space is freed, nothing lost.
-- [ ] **Memory on a low-end phone while assembling a large movie** (spec review issue 5). Record peak memory; decide whether streaming hashing is needed.
+- **Fixed:** after a storage-full pause, resubmitting the form was refused with "already downloading somewhere else", although the paused download belonged to this device. The page now resumes the device's own unfinished session. The server still refuses any second start.
+- **Fixed:** the phone assembled the whole movie in memory to hash it. It now hashes one 4 MB chunk at a time (incremental SHA-256), and chunks are stored as Blobs. Correctness is tested; the memory benefit on a real phone is not yet measured (item 9).
+- **Not a product bug:** an early run of scenario 3 failed because earlier copies filled the test disk, so the free-space check correctly refused.
 
 ## Sign-off
 
