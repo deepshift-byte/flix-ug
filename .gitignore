@@ -3,3 +3,6 @@ dist/
 *.db
 *.db-wal
 *.db-shm
+
+# Scratch and test directories created by this project tooling
+.superpowers/

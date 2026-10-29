@@ -8,7 +8,7 @@ import type { TitleCatalog } from '../catalog/title-catalog.js';
 import { CHUNK_SIZE, chunkCount } from '../download/chunks.js';
 import { signLink, verifyLink } from '../download/signed-link.js';
 import {
-  abandonSession, completeSession, confirmOffset, getSession, startSession,
+  abandonSession, completeSession, confirmOffset, getSession, payForLastChunk, startSession,
 } from '../sessions/session-service.js';
 
 const LINK_TTL_MS = 24 * 60 * 60 * 1000;
@@ -109,6 +109,12 @@ export function buildApp(opts: AppOptions): FastifyInstance {
     }
     const title = catalog.get(row.title_id);
     if (!title) return reply.code(404).send({ reason: 'unknown_title' });
+
+    // Serving the last chunk is the payment point: a fully fetched movie is charged even if the copy never completes.
+    if (index === chunkCount(row.expected_size) - 1) {
+      const paid = payForLastChunk(db, id, now());
+      if (!paid.ok) return reply.code(402).send({ reason: paid.reason });
+    }
 
     const start = index * CHUNK_SIZE;
     const length = Math.min(CHUNK_SIZE, row.expected_size - start);

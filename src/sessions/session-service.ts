@@ -33,9 +33,31 @@ export type StartResult =
         | 'active_session_exists';
     };
 
+export type SessionRow = {
+  id: string;
+  token_id: number;
+  title_id: string;
+  price_ugx: number;
+  destination: 'usb' | 'phone';
+  expected_size: number;
+  chunk_size: number;
+  chunk_hashes: string;
+  file_checksum: string;
+  bytes_confirmed: number;
+  paid: number;
+  status: 'active' | 'complete' | 'abandoned';
+  last_activity_at: string;
+  created_at: string;
+};
+
+export function getSession(db: Database.Database, sessionId: string): SessionRow | undefined {
+  return db.prepare('select * from sessions where id = ?').get(sessionId) as SessionRow | undefined;
+}
+
 export function startSession(db: Database.Database, input: StartInput): StartResult {
   return db.transaction((): StartResult => {
     expireAbandoned(db, input.now);
+
     const auth = verifyPin(db, input.tokenNumber, input.pin, input.now);
     if (!auth.ok) return { ok: false, reason: auth.reason };
 
@@ -71,12 +93,16 @@ export function startSession(db: Database.Database, input: StartInput): StartRes
   }).immediate();
 }
 
+// Abandons unpaid sessions idle for 24 hours (no charge). A paid session was delivered and charged, so it closes as complete.
 export function expireAbandoned(db: Database.Database, now: Date): number {
   const cutoff = new Date(now.getTime() - ABANDON_AFTER_MS).toISOString();
-  const result = db
-    .prepare("update sessions set status = 'abandoned' where status = 'active' and last_activity_at < ?")
-    .run(cutoff);
-  return result.changes;
+  const abandoned = db
+    .prepare("update sessions set status = 'abandoned' where status = 'active' and paid = 0 and last_activity_at < ?")
+    .run(cutoff).changes;
+  const closed = db
+    .prepare("update sessions set status = 'complete' where status = 'active' and paid = 1 and last_activity_at < ?")
+    .run(cutoff).changes;
+  return abandoned + closed;
 }
 
 export type ConfirmResult =
@@ -102,6 +128,30 @@ export function confirmOffset(db: Database.Database, sessionId: string, offset: 
   })();
 }
 
+export type PayResult = { ok: true } | { ok: false; reason: 'not_active' | 'unknown_session' | 'insufficient_balance' };
+
+// Charges the session once, when its last chunk is served. Repeat calls for a paid session are no-ops.
+export function payForLastChunk(db: Database.Database, sessionId: string, now: Date): PayResult {
+  return db.transaction((): PayResult => {
+    const row = getSession(db, sessionId);
+    if (!row) return { ok: false, reason: 'unknown_session' };
+    if (row.status !== 'active') return { ok: false, reason: 'not_active' };
+    if (row.paid) return { ok: true };
+
+    const { token_number: tokenNumber } = db
+      .prepare('select token_number from tokens where id = ?')
+      .get(row.token_id) as { token_number: string };
+    try {
+      debit(db, tokenNumber, row.price_ugx, sessionId);
+    } catch (err) {
+      if (err instanceof InsufficientBalance) return { ok: false, reason: 'insufficient_balance' };
+      throw err;
+    }
+    db.prepare('update sessions set paid = 1, last_activity_at = ? where id = ?').run(now.toISOString(), sessionId);
+    return { ok: true };
+  }).immediate();
+}
+
 export type CompleteResult =
   | { ok: true; chargedUgx: number }
   | { ok: false; reason: 'not_active' | 'incomplete' | 'checksum_mismatch' | 'insufficient_balance' };
@@ -115,12 +165,13 @@ export function completeSession(
   return db.transaction((): CompleteResult => {
     const row = db
       .prepare(
-        `select s.status, s.bytes_confirmed, s.expected_size, s.file_checksum, s.price_ugx, t.token_number
+        `select s.status, s.paid, s.bytes_confirmed, s.expected_size, s.file_checksum, s.price_ugx, t.token_number
            from sessions s join tokens t on t.id = s.token_id where s.id = ?`,
       )
       .get(sessionId) as
       | {
           status: string;
+          paid: number;
           bytes_confirmed: number;
           expected_size: number;
           file_checksum: string;
@@ -132,49 +183,33 @@ export function completeSession(
     if (row.bytes_confirmed !== row.expected_size) return { ok: false, reason: 'incomplete' };
     if (finalChecksum !== row.file_checksum) return { ok: false, reason: 'checksum_mismatch' };
 
-    try {
-      debit(db, row.token_number, row.price_ugx, sessionId);
-    } catch (err) {
-      if (err instanceof InsufficientBalance) return { ok: false, reason: 'insufficient_balance' };
-      throw err;
+    // A paid session was charged when its last chunk was served; completing it must not charge again.
+    if (!row.paid) {
+      try {
+        debit(db, row.token_number, row.price_ugx, sessionId);
+      } catch (err) {
+        if (err instanceof InsufficientBalance) return { ok: false, reason: 'insufficient_balance' };
+        throw err;
+      }
     }
 
     db.prepare("update sessions set status = 'complete', last_activity_at = ? where id = ?").run(
       now.toISOString(),
       sessionId,
     );
-    return { ok: true, chargedUgx: row.price_ugx };
+    return { ok: true, chargedUgx: row.paid ? 0 : row.price_ugx };
   }).immediate();
-}
-
-export type SessionRow = {
-  id: string;
-  token_id: number;
-  title_id: string;
-  price_ugx: number;
-  destination: 'usb' | 'phone';
-  expected_size: number;
-  chunk_size: number;
-  chunk_hashes: string;
-  file_checksum: string;
-  bytes_confirmed: number;
-  status: 'active' | 'complete' | 'abandoned';
-  last_activity_at: string;
-  created_at: string;
-};
-
-export function getSession(db: Database.Database, sessionId: string): SessionRow | undefined {
-  return db.prepare('select * from sessions where id = ?').get(sessionId) as SessionRow | undefined;
 }
 
 export function abandonSession(
   db: Database.Database,
   sessionId: string,
   now: Date,
-): { ok: true } | { ok: false; reason: 'not_active' | 'unknown_session' } {
+): { ok: true } | { ok: false; reason: 'not_active' | 'unknown_session' | 'already_paid' } {
   const row = getSession(db, sessionId);
   if (!row) return { ok: false, reason: 'unknown_session' };
   if (row.status !== 'active') return { ok: false, reason: 'not_active' };
+  if (row.paid) return { ok: false, reason: 'already_paid' };
   db.prepare("update sessions set status = 'abandoned', last_activity_at = ? where id = ?").run(now.toISOString(), sessionId);
   return { ok: true };
 }

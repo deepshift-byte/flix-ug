@@ -22,6 +22,7 @@
   </form>
   <div id="status" role="status"></div>
   <a id="save" hidden>Save file</a>
+  <button id="finish" hidden>Saved, finish</button>
 
   <script type="module">
     import { assemble, downloadChunks, indexedDbStore } from './assemble.js';
@@ -30,6 +31,7 @@
     const CHUNK_SIZE = 4 * 1024 * 1024;
     const SESSION_KEY = 'flix-phone-session';
     const store = indexedDbStore();
+    let pending = null;
     const $ = (id) => document.getElementById(id);
     const say = (text) => { $('status').textContent = text; };
 
@@ -78,30 +80,41 @@
         return;
       }
 
+      pending = { sessionId, fileChecksum };
       const assembled = await assemble(store, sessionId, chunkCount, fileChecksum);
       if (!assembled.ok) {
         say(`The file could not be checked (${assembled.reason}). Nothing has been charged.`);
         return;
       }
 
-      const done = await fetch(`/sessions/${sessionId}/complete`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ checksum: fileChecksum }),
-      });
-      if (!done.ok) {
-        say(`Not charged: ${(await readJson(done)).reason}`);
-        return;
-      }
-
-      await store.clear(`${sessionId}:`);
-      forgetSession();
+      // The movie was paid for when its last chunk was served. The session is closed only after the customer
+      // confirms the save, and the chunks are kept until then, so a closed tab can still offer the file.
       const link = $('save');
       link.href = URL.createObjectURL(assembled.blob);
       link.download = titleId;
       link.hidden = false;
-      say('Done. Tap "Save file" to keep it on your phone.');
+      $('finish').hidden = false;
+      say('Ready. Tap "Save file", then "Saved, finish" once it is on your phone.');
     }
+
+    $('finish').addEventListener('click', async () => {
+      if (!pending) return;
+      const done = await fetch(`/sessions/${pending.sessionId}/complete`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ checksum: pending.fileChecksum }),
+      });
+      const data = await readJson(done);
+      if (!done.ok && data.reason !== 'not_active') {
+        say(`Could not finish (${data.reason}). Your file is still here; try again.`);
+        return;
+      }
+      await store.clear(`${pending.sessionId}:`);
+      forgetSession();
+      pending = null;
+      $('finish').hidden = true;
+      say('Finished.');
+    });
 
     $('form').addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -125,9 +138,9 @@
     });
 
     // Reopening the page resumes an unfinished download.
-    const pending = recalledSession();
-    if (pending) {
-      fetch(`/sessions/${pending}`).then(readJson).then((data) => {
+    const unfinished = recalledSession();
+    if (unfinished) {
+      fetch(`/sessions/${unfinished}`).then(readJson).then((data) => {
         if (data.status === 'active') run(data, 'movie.mp4');
         else forgetSession();
       });

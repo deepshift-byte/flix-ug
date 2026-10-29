@@ -138,3 +138,33 @@ describe('request validation and the phone page', () => {
     expect(res.headers['content-type']).toMatch(/javascript/);
   });
 });
+
+describe('payment at the last chunk', () => {
+  async function start(app: ReturnType<typeof setup>['app'], tokenNumber: string) {
+    const res = await app.inject({
+      method: 'POST', url: '/sessions', payload: { tokenNumber, pin: '4821', titleId: 'movie-1', destination: 'usb' },
+    });
+    return res.json();
+  }
+
+  it('fetching the last chunk charges the token before completion', async () => {
+    const { app, db, tokenNumber } = setup();
+    const info = await start(app, tokenNumber);
+    const last = info.links[2];
+    const res = await app.inject({
+      method: 'GET', url: `/sessions/${info.sessionId}/chunks/2?exp=${last.exp}&sig=${last.sig}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(getBalance(db, tokenNumber)).toBe(4000);
+  });
+
+  it('a paid session cannot be abandoned', async () => {
+    const { app, db, tokenNumber } = setup();
+    const info = await start(app, tokenNumber);
+    const last = info.links[2];
+    await app.inject({ method: 'GET', url: `/sessions/${info.sessionId}/chunks/2?exp=${last.exp}&sig=${last.sig}` });
+    const res = await app.inject({ method: 'POST', url: `/sessions/${info.sessionId}/abandon` });
+    expect(res.statusCode).toBe(409);
+    expect(getBalance(db, tokenNumber)).toBe(4000);
+  });
+});

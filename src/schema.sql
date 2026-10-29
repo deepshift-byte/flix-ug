@@ -30,6 +30,7 @@ create table if not exists sessions (
   chunk_hashes text not null,
   file_checksum text not null,
   bytes_confirmed integer not null default 0 check (bytes_confirmed >= 0),
+  paid integer not null default 0 check (paid in (0, 1)),
   status text not null default 'active' check (status in ('active', 'complete', 'abandoned')),
   last_activity_at text not null,
   created_at text not null

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { openDb } from '../src/db';
 import { createToken } from '../src/tokens/token-service';
 import { topUp, getBalance } from '../src/tokens/ledger';
-import { startSession, expireAbandoned } from '../src/sessions/session-service';
+import { startSession, expireAbandoned, payForLastChunk, getSession } from '../src/sessions/session-service';
 
 const base = {
   titleId: 'title-1', kind: 'movie' as const, episodes: 1, destination: 'usb' as const,
@@ -58,5 +58,19 @@ describe('stale sessions', () => {
     startSession(db, { ...base, tokenNumber, pin: '4821' });
     const later = new Date(base.now.getTime() + 25 * 60 * 60 * 1000);
     expect(startSession(db, { ...base, tokenNumber, pin: '4821', now: later })).toMatchObject({ ok: true });
+  });
+});
+
+describe('paid sessions', () => {
+  it('a paid stale session is closed as complete, not abandoned', () => {
+    const db = openDb(':memory:');
+    const { tokenNumber } = createToken(db, '4821');
+    topUp(db, tokenNumber, 5000, 'pay-1');
+    const started = startSession(db, { ...base, tokenNumber, pin: '4821' });
+    if (!started.ok) throw new Error('setup failed');
+    payForLastChunk(db, started.sessionId, base.now);
+    expireAbandoned(db, new Date(base.now.getTime() + 25 * 60 * 60 * 1000));
+    expect(getSession(db, started.sessionId)?.status).toBe('complete');
+    expect(getBalance(db, tokenNumber)).toBe(4000);
   });
 });
