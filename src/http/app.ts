@@ -1,5 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { openSync, closeSync, readSync, statSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type Database from 'better-sqlite3';
 import { isLanAddress } from './lan-only.js';
 import type { TitleCatalog } from '../catalog/title-catalog.js';
@@ -66,7 +68,11 @@ export function buildApp(opts: AppOptions): FastifyInstance {
   app.post<{
     Body: { tokenNumber: string; pin: string; titleId: string; destination: 'usb' | 'phone' };
   }>('/sessions', async (request, reply) => {
-    const { tokenNumber, pin, titleId, destination } = request.body;
+    const body = (request.body ?? {}) as Partial<{ tokenNumber: string; pin: string; titleId: string; destination: 'usb' | 'phone' }>;
+    const { tokenNumber, pin, titleId, destination } = body;
+    if (typeof tokenNumber !== 'string' || typeof pin !== 'string' || typeof titleId !== 'string') {
+      return reply.code(400).send({ reason: 'bad_request' });
+    }
     if (destination !== 'usb' && destination !== 'phone') return reply.code(400).send({ reason: 'bad_destination' });
     const title = catalog.get(titleId);
     if (!title) return reply.code(404).send({ reason: 'unknown_title' });
@@ -128,7 +134,9 @@ export function buildApp(opts: AppOptions): FastifyInstance {
   });
 
   app.post<{ Params: { id: string }; Body: { checksum: string } }>('/sessions/:id/complete', async (request, reply) => {
-    const result = completeSession(db, request.params.id, request.body.checksum, now());
+    const checksum = (request.body as { checksum?: unknown } | undefined)?.checksum;
+    if (typeof checksum !== 'string') return reply.code(400).send({ reason: 'bad_request' });
+    const result = completeSession(db, request.params.id, checksum, now());
     if (!result.ok) return reply.code(COMPLETE_STATUS[result.reason] ?? 400).send({ reason: result.reason });
     return { chargedUgx: result.chargedUgx };
   });
@@ -138,6 +146,17 @@ export function buildApp(opts: AppOptions): FastifyInstance {
     if (!result.ok) return reply.code(409).send({ reason: result.reason });
     return { status: 'abandoned' };
   });
+
+  const phoneDir = fileURLToPath(new URL('../../public/phone/', import.meta.url));
+  const phonePages: [string[], string, string][] = [
+    [['/phone', '/phone/'], 'index.html', 'text/html; charset=utf-8'],
+    [['/phone/assemble.js'], 'assemble.js', 'application/javascript; charset=utf-8'],
+  ];
+  for (const [urls, file, type] of phonePages) {
+    for (const url of urls) {
+      app.get(url, async (_request, reply) => reply.type(type).send(readFileSync(join(phoneDir, file))));
+    }
+  }
 
   return app;
 }

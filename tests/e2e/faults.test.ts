@@ -28,7 +28,7 @@ describe('fault injection', () => {
     await expect(downloadToUsb({ client: killed, ...args })).rejects.toThrow('killed before rename');
     expect(getBalance(world.db, world.tokenNumber)).toBe(4000);
 
-    const again = await downloadToUsb({ client, ...args, resumeSessionId: journalOf(world.usbDir).sessionId });
+    const again = await downloadToUsb({ client, ...args });
     expect(again.ok).toBe(true);
     expect(readFileSync(join(world.usbDir, 'movie.mp4')).equals(world.content)).toBe(true);
     expect(getBalance(world.db, world.tokenNumber)).toBe(4000);
@@ -48,7 +48,7 @@ describe('fault injection', () => {
     const args = { usbDir: world.usbDir, tokenNumber: world.tokenNumber, pin: '4821', titleId: 'movie-1', fileName: 'movie.mp4' };
 
     expect(await downloadToUsb({ client: killed, ...args })).toEqual({ ok: false, reason: 'network_error' });
-    const again = await downloadToUsb({ client, ...args, resumeSessionId: journalOf(world.usbDir).sessionId });
+    const again = await downloadToUsb({ client, ...args });
     expect(again.ok).toBe(true);
     expect(readFileSync(join(world.usbDir, 'movie.mp4')).equals(world.content)).toBe(true);
     expect(getBalance(world.db, world.tokenNumber)).toBe(4000);
@@ -70,7 +70,7 @@ describe('fault injection', () => {
     expect(expireAbandoned(world.db, new Date(Date.now() + 25 * 60 * 60 * 1000))).toBe(1);
     expect(getBalance(world.db, world.tokenNumber)).toBe(5000);
 
-    const resumed = await downloadToUsb({ client, ...args, resumeSessionId: journalOf(world.usbDir).sessionId });
+    const resumed = await downloadToUsb({ client, ...args });
     expect(resumed).toEqual({ ok: false, reason: 'session_not_active' });
     expect(getBalance(world.db, world.tokenNumber)).toBe(5000);
   });

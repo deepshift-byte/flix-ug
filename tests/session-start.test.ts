@@ -49,3 +49,14 @@ describe('startSession', () => {
     expect(getBalance(db, tokenNumber)).toBe(5000);
   });
 });
+
+describe('stale sessions', () => {
+  it('a session stale for more than 24 hours no longer blocks a new start', () => {
+    const db = openDb(':memory:');
+    const { tokenNumber } = createToken(db, '4821');
+    topUp(db, tokenNumber, 5000, 'pay-1');
+    startSession(db, { ...base, tokenNumber, pin: '4821' });
+    const later = new Date(base.now.getTime() + 25 * 60 * 60 * 1000);
+    expect(startSession(db, { ...base, tokenNumber, pin: '4821', now: later })).toMatchObject({ ok: true });
+  });
+});

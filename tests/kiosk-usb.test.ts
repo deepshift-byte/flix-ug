@@ -101,11 +101,11 @@ const journalPath = () => join(usbDir, JOURNAL_FILE);
 
 describe('downloadToUsb', () => {
   it('ignores_journal_for_different_session', async () => {
-    writeFileSync(journalPath(), JSON.stringify({ sessionId: 'A', titleId: 't1' }));
+    writeFileSync(journalPath(), JSON.stringify({ sessionId: 'A', titleId: 'other-title' }));
     writeFileSync(partPath(), Buffer.alloc(4 * MB, 0xee));
     const server = new FakeServer('B');
     const result = await downloadToUsb({
-      client: server, usbDir, tokenNumber: 'TOKEN', pin: '4821', titleId: 't1', fileName: FILE, resumeSessionId: 'B',
+      client: server, usbDir, tokenNumber: 'TOKEN', pin: '4821', titleId: 't1', fileName: FILE,
     });
     expect(result.ok).toBe(true);
     expect(server.startCalls).toBe(1);
@@ -119,7 +119,7 @@ describe('downloadToUsb', () => {
     const server = new FakeServer('S');
     server.confirmed = 8 * MB;
     const result = await downloadToUsb({
-      client: server, usbDir, tokenNumber: 'TOKEN', pin: '4821', titleId: 't1', fileName: FILE, resumeSessionId: 'S',
+      client: server, usbDir, tokenNumber: 'TOKEN', pin: '4821', titleId: 't1', fileName: FILE,
     });
     expect(result.ok).toBe(true);
     expect(server.startCalls).toBe(0);
@@ -182,11 +182,40 @@ describe('downloadToUsb', () => {
     server.state = 'complete';
     server.confirmed = content.length;
     const result = await downloadToUsb({
-      client: server, usbDir, tokenNumber: 'TOKEN', pin: '4821', titleId: 't1', fileName: FILE, resumeSessionId: 'S',
+      client: server, usbDir, tokenNumber: 'TOKEN', pin: '4821', titleId: 't1', fileName: FILE,
     });
     expect(result.ok).toBe(true);
     expect(server.fetched).toEqual([]);
     expect(readFileSync(finalPath()).equals(content)).toBe(true);
     expect(existsSync(journalPath())).toBe(false);
+  });
+});
+
+describe('automatic resume', () => {
+  it('resumes a same-title journal without the caller naming the session', async () => {
+    writeFileSync(journalPath(), JSON.stringify({ sessionId: 'S', titleId: 't1' }));
+    writeFileSync(partPath(), content.subarray(0, 4 * MB));
+    const server = new FakeServer('S');
+    server.confirmed = 8 * MB;
+    const result = await downloadToUsb({
+      client: server, usbDir, tokenNumber: 'TOKEN', pin: '4821', titleId: 't1', fileName: FILE,
+    });
+    expect(result.ok).toBe(true);
+    expect(server.startCalls).toBe(0);
+    expect(server.fetched).toEqual([1, 2]);
+  });
+});
+
+describe('free space', () => {
+  it('abandons the session and writes nothing when the stick is too small', async () => {
+    const server = new FakeServer('S');
+    const result = await downloadToUsb({
+      client: server, usbDir, tokenNumber: 'TOKEN', pin: '4821', titleId: 't1', fileName: FILE,
+      availableBytes: () => 1024,
+    });
+    expect(result).toEqual({ ok: false, reason: 'insufficient_space' });
+    expect(server.abandoned).toBe(true);
+    expect(server.fetched).toEqual([]);
+    expect(existsSync(partPath())).toBe(false);
   });
 });

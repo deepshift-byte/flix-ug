@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
-  closeSync, existsSync, fsyncSync, ftruncateSync, openSync, readSync, renameSync, rmSync, statSync, writeSync,
+  closeSync, existsSync, fsyncSync, ftruncateSync, openSync, readSync, renameSync, rmSync, statfsSync, statSync, writeSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import { CHUNK_SIZE, chunkCount, chunkRange } from '../download/chunks.js';
@@ -32,16 +32,21 @@ export interface ServerClient {
 export type DownloadOptions = {
   client: ServerClient;
   usbDir: string;
+  availableBytes?: (dir: string) => number;
   tokenNumber: string;
   pin: string;
   titleId: string;
   fileName: string;
-  resumeSessionId?: string;
 };
 
 export type DownloadResult = { ok: true; path: string } | { ok: false; reason: string };
 
 const MAX_CHUNK_ATTEMPTS = 3;
+
+function availableBytes(dir: string): number {
+  const s = statfsSync(dir);
+  return s.bavail * s.bsize;
+}
 
 function sha256(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex');
@@ -98,7 +103,8 @@ export async function downloadToUsb(opts: DownloadOptions): Promise<DownloadResu
   const partPath = join(opts.usbDir, `${opts.fileName}.part`);
   const finalPath = join(opts.usbDir, opts.fileName);
   const journal = readJournal(journalFile);
-  const resuming = journal !== null && journal.titleId === opts.titleId && journal.sessionId === opts.resumeSessionId;
+  // The journal's title is the only session identity the kiosk knows, so a same-title journal always resumes.
+  const resuming = journal !== null && journal.titleId === opts.titleId;
 
   let info: StartInfo;
   let startIndex = 0;
@@ -148,6 +154,12 @@ export async function downloadToUsb(opts: DownloadOptions): Promise<DownloadResu
     });
     if (!started.ok) return { ok: false, reason: started.reason };
     info = started.info;
+
+    const free = (opts.availableBytes ?? availableBytes)(opts.usbDir);
+    if (free < info.fileSize) {
+      await opts.client.abandon(info.sessionId);
+      return { ok: false, reason: 'insufficient_space' };
+    }
 
     writeJournal(journalFile, { sessionId: info.sessionId, titleId: opts.titleId });
     createEmptyFile(partPath);

@@ -35,6 +35,7 @@ export type StartResult =
 
 export function startSession(db: Database.Database, input: StartInput): StartResult {
   return db.transaction((): StartResult => {
+    expireAbandoned(db, input.now);
     const auth = verifyPin(db, input.tokenNumber, input.pin, input.now);
     if (!auth.ok) return { ok: false, reason: auth.reason };
 

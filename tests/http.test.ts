@@ -103,3 +103,38 @@ describe('HTTP routes', () => {
     expect(getBalance(db, tokenNumber)).toBe(4000);
   });
 });
+
+describe('request validation and the phone page', () => {
+  it('returns 400 for a start with no body', async () => {
+    const { app } = setup();
+    const res = await app.inject({ method: 'POST', url: '/sessions' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 400 for a confirm with a non-numeric offset', async () => {
+    const { app } = setup();
+    const res = await app.inject({ method: 'POST', url: '/sessions/abc/confirm', payload: { offset: 'lots' } });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 400 for a complete with no checksum', async () => {
+    const { app } = setup();
+    const res = await app.inject({ method: 'POST', url: '/sessions/abc/complete', payload: {} });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('serves the phone download page from /phone', async () => {
+    const { app } = setup();
+    const res = await app.inject({ method: 'GET', url: '/phone' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toMatch(/text\/html/);
+    expect(res.body).toContain('FLIX-UG');
+  });
+
+  it('serves the phone assembly module', async () => {
+    const { app } = setup();
+    const res = await app.inject({ method: 'GET', url: '/phone/assemble.js' });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toMatch(/javascript/);
+  });
+});

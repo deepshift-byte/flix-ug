@@ -31,7 +31,7 @@ describe('full flow', () => {
     expect(getBalance(world.db, world.tokenNumber)).toBe(5000);
 
     const journal = JSON.parse(readFileSync(join(world.usbDir, '.flix-journal.json'), 'utf8'));
-    const second = await downloadToUsb({ client, ...args, resumeSessionId: journal.sessionId });
+    const second = await downloadToUsb({ client, ...args });
     expect(second.ok).toBe(true);
     expect(readFileSync(join(world.usbDir, 'movie.mp4')).equals(world.content)).toBe(true);
     expect(getBalance(world.db, world.tokenNumber)).toBe(4000);
