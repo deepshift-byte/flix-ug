@@ -1,9 +1,9 @@
 import type Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
-import { priceFor, type TitleKind } from '../pricing';
-import { debit, getBalance, InsufficientBalance } from '../tokens/ledger';
-import { verifyPin } from '../tokens/token-service';
-import { CHUNK_SIZE } from '../download/chunks';
+import { priceFor, type TitleKind } from '../pricing.js';
+import { debit, getBalance, InsufficientBalance } from '../tokens/ledger.js';
+import { verifyPin } from '../tokens/token-service.js';
+import { CHUNK_SIZE } from '../download/chunks.js';
 
 const ABANDON_AFTER_MS = 24 * 60 * 60 * 1000;
 
@@ -144,4 +144,36 @@ export function completeSession(
     );
     return { ok: true, chargedUgx: row.price_ugx };
   }).immediate();
+}
+
+export type SessionRow = {
+  id: string;
+  token_id: number;
+  title_id: string;
+  price_ugx: number;
+  destination: 'usb' | 'phone';
+  expected_size: number;
+  chunk_size: number;
+  chunk_hashes: string;
+  file_checksum: string;
+  bytes_confirmed: number;
+  status: 'active' | 'complete' | 'abandoned';
+  last_activity_at: string;
+  created_at: string;
+};
+
+export function getSession(db: Database.Database, sessionId: string): SessionRow | undefined {
+  return db.prepare('select * from sessions where id = ?').get(sessionId) as SessionRow | undefined;
+}
+
+export function abandonSession(
+  db: Database.Database,
+  sessionId: string,
+  now: Date,
+): { ok: true } | { ok: false; reason: 'not_active' | 'unknown_session' } {
+  const row = getSession(db, sessionId);
+  if (!row) return { ok: false, reason: 'unknown_session' };
+  if (row.status !== 'active') return { ok: false, reason: 'not_active' };
+  db.prepare("update sessions set status = 'abandoned', last_activity_at = ? where id = ?").run(now.toISOString(), sessionId);
+  return { ok: true };
 }

@@ -3,9 +3,9 @@ import {
   closeSync, existsSync, fsyncSync, ftruncateSync, openSync, readSync, renameSync, rmSync, statSync, writeSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { CHUNK_SIZE, chunkCount, chunkRange } from '../download/chunks';
-import { deleteJournal, JOURNAL_FILE, readJournal, writeJournal } from './journal';
-import { chunkAlignedStart, resumeOffset } from './resume';
+import { CHUNK_SIZE, chunkCount, chunkRange } from '../download/chunks.js';
+import { deleteJournal, JOURNAL_FILE, readJournal, writeJournal } from './journal.js';
+import { chunkAlignedStart, resumeOffset } from './resume.js';
 
 export type SignedLink = { exp: string; sig: string };
 

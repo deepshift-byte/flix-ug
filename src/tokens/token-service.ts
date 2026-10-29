@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
-import { checkPin, hashPin } from './pin';
-import { generateTokenNumber } from './token-number';
+import { checkPin, hashPin } from './pin.js';
+import { generateTokenNumber } from './token-number.js';
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_MINUTES = 15;

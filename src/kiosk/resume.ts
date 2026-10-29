@@ -1,4 +1,4 @@
-import { CHUNK_SIZE } from '../download/chunks';
+import { CHUNK_SIZE } from '../download/chunks.js';
 
 export function resumeOffset(serverOffset: number, localPartSize: number): number {
   return Math.min(serverOffset, localPartSize);
