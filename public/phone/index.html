@@ -130,6 +130,14 @@
         }),
       });
       const data = await readJson(res);
+      // A paused download on this device is still open on the server: resume it instead of refusing.
+      if (!res.ok && data.reason === 'active_session_exists' && recalledSession()) {
+        const open = await readJson(await fetch(`/sessions/${recalledSession()}`));
+        if (open.status === 'active') {
+          await run(open, titleId);
+          return;
+        }
+      }
       if (!res.ok) {
         say(messages[data.reason] ?? `Could not start the download (${data.reason ?? res.status}).`);
         return;
