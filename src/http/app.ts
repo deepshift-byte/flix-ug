@@ -154,8 +154,10 @@ export function buildApp(opts: AppOptions): FastifyInstance {
   });
 
   const phoneDir = fileURLToPath(new URL('../../public/phone/', import.meta.url));
+  // The page imports its module relatively, so it must live at /phone/ to resolve /phone/assemble.js.
+  app.get('/phone', async (_request, reply) => reply.redirect('/phone/'));
   const phonePages: [string[], string, string][] = [
-    [['/phone', '/phone/'], 'index.html', 'text/html; charset=utf-8'],
+    [['/phone/'], 'index.html', 'text/html; charset=utf-8'],
     [['/phone/assemble.js'], 'assemble.js', 'application/javascript; charset=utf-8'],
   ];
   for (const [urls, file, type] of phonePages) {

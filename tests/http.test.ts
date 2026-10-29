@@ -123,9 +123,16 @@ describe('request validation and the phone page', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('serves the phone download page from /phone', async () => {
+  it('redirects /phone to /phone/ so the page can load its relative module', async () => {
     const { app } = setup();
     const res = await app.inject({ method: 'GET', url: '/phone' });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe('/phone/');
+  });
+
+  it('serves the phone download page from /phone/', async () => {
+    const { app } = setup();
+    const res = await app.inject({ method: 'GET', url: '/phone/' });
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toMatch(/text\/html/);
     expect(res.body).toContain('FLIX-UG');
