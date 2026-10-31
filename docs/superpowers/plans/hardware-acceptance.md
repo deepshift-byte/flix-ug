@@ -21,7 +21,7 @@ Build: `c1f21ff` or later. Scratch harness (not committed): `.superpowers/smoke/
 
 ## Findings from this run
 
-- **Open decision: large movies on phones.** A 1.2 GB movie cannot be stored as chunks in this browser before it pauses with storage_full. The pause is safe (nothing charged, resumable), but the movie cannot complete on the phone.
+- **Large movies on phones (decided: parts).** A whole 1.2 GB movie cannot be stored in this browser at once. Phones now download in 256 MB parts, each saved before the next downloads: the 512 MB movie is 3 parts and the 1.2 GB movie is 5 parts, each byte-identical to the source, charged once. The customer joins the parts with a video tool. Tested in Chromium only.
 
 - **Fixed:** after a storage-full pause, resubmitting the form was refused with "already downloading somewhere else", although the paused download belonged to this device. The page now resumes the device's own unfinished session. The server still refuses any second start.
 - **Fixed:** the phone assembled the whole movie in memory to hash it. It now hashes one 4 MB chunk at a time (incremental SHA-256), and chunks are stored as Blobs. Correctness is tested; the memory benefit on a real phone is not yet measured (item 9).

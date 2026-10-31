@@ -1,4 +1,10 @@
+// Phone-side download: the movie is fetched chunk by chunk, saved as parts, and each part is
+// offered to the customer to save before the next one downloads. Progress and the running
+// SHA-256 are saved to the same store, so a reloaded page continues where it stopped.
+
 const MAX_CHUNK_ATTEMPTS = 3;
+// 64 chunks of 4 MiB: 256 MiB per part, which stays within what phone browsers keep stored.
+export const CHUNKS_PER_PART = 64;
 
 export class StorageFullError extends Error {
   constructor(cause) {
@@ -14,6 +20,7 @@ async function sha256Hex(buffer) {
 }
 
 const keyFor = (sessionId, index) => `${sessionId}:${String(index).padStart(6, '0')}`;
+const progressKey = (sessionId) => `${sessionId}:progress`;
 
 export function memoryStore() {
   const map = new Map();
@@ -23,6 +30,9 @@ export function memoryStore() {
     },
     async get(key) {
       return map.get(key);
+    },
+    async delete(key) {
+      map.delete(key);
     },
     async keys(prefix) {
       return [...map.keys()].filter((k) => k.startsWith(prefix));
@@ -55,6 +65,7 @@ export function indexedDbStore(name = 'flix-phone') {
   return {
     put: (key, value) => run('readwrite', (s) => s.put(value, key)),
     get: (key) => run('readonly', (s) => s.get(key)),
+    delete: (key) => run('readwrite', (s) => s.delete(key)),
     keys: async (prefix) => (await run('readonly', (s) => s.getAllKeys())).filter((k) => k.startsWith(prefix)),
     clear: async (prefix) => {
       const keys = (await run('readonly', (s) => s.getAllKeys())).filter((k) => k.startsWith(prefix));
@@ -63,11 +74,24 @@ export function indexedDbStore(name = 'flix-phone') {
   };
 }
 
-// Returns true when stored, false on hash mismatch (nothing stored). Throws StorageFullError when the device is full.
+export function partCount(chunkCount) {
+  return Math.ceil(chunkCount / CHUNKS_PER_PART);
+}
+
+export function partChunkRange(chunkCount, part) {
+  const start = part * CHUNKS_PER_PART;
+  return { start, end: Math.min(start + CHUNKS_PER_PART, chunkCount) };
+}
+
+export async function readProgress(store, sessionId) {
+  return (await store.get(progressKey(sessionId))) ?? { next: 0, hash: new Sha256().snapshot(), cleared: 0 };
+}
+
+// Stores a verified chunk as a Blob, so browsers can keep large chunks on disk.
+// Returns true when stored, false on hash mismatch. Throws StorageFullError when the device is full.
 export async function storeChunk(store, sessionId, index, bytes, expectedHash) {
   if ((await sha256Hex(bytes)) !== expectedHash) return false;
   try {
-    // Stored as a Blob so browsers can keep large chunks on disk instead of in memory.
     await store.put(keyFor(sessionId, index), new Blob([bytes]));
   } catch (err) {
     if (err && err.name === 'QuotaExceededError') throw new StorageFullError(err);
@@ -76,56 +100,74 @@ export async function storeChunk(store, sessionId, index, bytes, expectedHash) {
   return true;
 }
 
-export async function missingChunks(store, sessionId, count) {
-  const have = new Set(await store.keys(`${sessionId}:`));
-  const missing = [];
-  for (let i = 0; i < count; i++) {
-    if (!have.has(keyFor(sessionId, i))) missing.push(i);
-  }
-  return missing;
-}
+// Downloads the next chunk, verifies it, stores it, extends the running hash and saves progress.
+// Progress is saved only after the chunk is stored, so a crash in between just refetches that chunk.
+export async function downloadNextChunk(store, opts) {
+  const { sessionId, chunkCount, fileSize, chunkSize, chunkHashes, links, fetchChunk, confirm } = opts;
+  const progress = await readProgress(store, sessionId);
+  if (progress.next >= chunkCount) return { ok: true, done: true };
 
-// Fetches, verifies, stores and confirms every missing chunk in index order.
-export async function downloadChunks(store, opts) {
-  const { sessionId, chunkCount, chunkHashes, links, fetchChunk, confirm, fileSize, chunkSize } = opts;
-  for (const index of await missingChunks(store, sessionId, chunkCount)) {
-    let stored = false;
-    for (let attempt = 0; attempt < MAX_CHUNK_ATTEMPTS && !stored; attempt++) {
-      let bytes;
-      try {
-        bytes = await fetchChunk(index, links[index]);
-      } catch {
-        return { ok: false, reason: 'network_error' };
-      }
-      try {
-        stored = await storeChunk(store, sessionId, index, bytes, chunkHashes[index]);
-      } catch (err) {
-        if (err instanceof StorageFullError) return { ok: false, reason: 'storage_full' };
-        throw err;
-      }
+  // Hold at a finished part until the customer has saved it: its chunks are still needed for the save.
+  const finishedParts = progress.next / CHUNKS_PER_PART;
+  if (progress.next > 0 && Number.isInteger(finishedParts) && progress.cleared < finishedParts) {
+    return { ok: true, done: false, awaitingSave: true, part: finishedParts - 1, partComplete: true };
+  }
+
+  const index = progress.next;
+  let bytes = null;
+  let failures = 0;
+  while (bytes === null) {
+    let fetched;
+    try {
+      fetched = new Uint8Array(await fetchChunk(index, links[index]));
+    } catch {
+      return { ok: false, reason: 'network_error' };
     }
-    if (!stored) return { ok: false, reason: 'hash_failed' };
-    await confirm(Math.min((index + 1) * chunkSize, fileSize));
+    if ((await sha256Hex(fetched)) === chunkHashes[index]) bytes = fetched;
+    else if (++failures >= MAX_CHUNK_ATTEMPTS) return { ok: false, reason: 'hash_failed' };
   }
-  // Re-confirm the full size: a confirm lost after the last chunk would otherwise stall the server at fileSize - chunk.
-  if (chunkCount > 0) await confirm(fileSize);
-  return { ok: true };
+
+  try {
+    await store.put(keyFor(sessionId, index), new Blob([bytes]));
+  } catch (err) {
+    if (err && err.name === 'QuotaExceededError') return { ok: false, reason: 'storage_full' };
+    throw err;
+  }
+
+  const next = index + 1;
+  const hash = Sha256.restore(progress.hash).update(bytes).snapshot();
+  await store.put(progressKey(sessionId), { next, hash, cleared: progress.cleared });
+  await confirm(Math.min(next * chunkSize, fileSize));
+  return {
+    ok: true,
+    done: false,
+    index,
+    part: Math.floor(index / CHUNKS_PER_PART),
+    partComplete: next % CHUNKS_PER_PART === 0 || next === chunkCount,
+  };
 }
 
-export async function assemble(store, sessionId, chunkCount, fileChecksum) {
-  if ((await missingChunks(store, sessionId, chunkCount)).length > 0) {
-    return { ok: false, reason: 'missing_chunks' };
-  }
+// The saved part as one file. Its chunks are Blobs, so this does not copy them into memory.
+export async function partBlob(store, sessionId, part, chunkCount) {
+  const { start, end } = partChunkRange(chunkCount, part);
   const parts = [];
-  for (let i = 0; i < chunkCount; i++) parts.push(await store.get(keyFor(sessionId, i)));
-  const blob = new Blob(parts);
-  // Hash one chunk at a time, so the whole movie is never held in memory.
-  const hash = new Sha256();
-  for (const part of parts) hash.update(new Uint8Array(await part.arrayBuffer()));
-  if (hash.hex() !== fileChecksum) {
-    return { ok: false, reason: 'checksum_mismatch' };
-  }
-  return { ok: true, blob };
+  for (let i = start; i < end; i++) parts.push(await store.get(keyFor(sessionId, i)));
+  return new Blob(parts);
+}
+
+// Frees a part's chunks once the customer has saved that part, and records that it was saved.
+export async function clearPart(store, sessionId, part, chunkCount) {
+  const { start, end } = partChunkRange(chunkCount, part);
+  for (let i = start; i < end; i++) await store.delete(keyFor(sessionId, i));
+  const progress = await readProgress(store, sessionId);
+  await store.put(progressKey(sessionId), { ...progress, cleared: Math.max(progress.cleared, part + 1) });
+}
+
+// True only once every chunk has been hashed and the whole movie matches the expected checksum.
+export async function finalChecksumMatches(store, sessionId, expectedChecksum, chunkCount) {
+  const progress = await readProgress(store, sessionId);
+  if (progress.next !== chunkCount) return false;
+  return Sha256.restore(progress.hash).hex() === expectedChecksum;
 }
 
 // Incremental SHA-256. WebCrypto cannot hash a stream, and a whole movie must not sit in memory at once.
@@ -199,6 +241,20 @@ export class Sha256 {
       this.bufLen = bytes.length - offset;
     }
     return this;
+  }
+
+  // Saved state, so a reloaded page can continue hashing where it stopped.
+  snapshot() {
+    return { h: [...this.h], buf: Array.from(this.buf.subarray(0, this.bufLen)), length: this.length };
+  }
+
+  static restore(saved) {
+    const hash = new Sha256();
+    hash.h = [...saved.h];
+    hash.buf.set(saved.buf);
+    hash.bufLen = saved.buf.length;
+    hash.length = saved.length;
+    return hash;
   }
 
   hex() {
