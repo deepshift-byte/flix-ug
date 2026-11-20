@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import { transaction, type Db } from '../db.js';
 import { randomBytes } from 'node:crypto';
 import { priceFor, type TitleKind } from '../pricing.js';
 import { debit, getBalance, InsufficientBalance } from '../tokens/ledger.js';
@@ -50,12 +50,12 @@ export type SessionRow = {
   created_at: string;
 };
 
-export function getSession(db: Database.Database, sessionId: string): SessionRow | undefined {
+export function getSession(db: Db, sessionId: string): SessionRow | undefined {
   return db.prepare('select * from sessions where id = ?').get(sessionId) as SessionRow | undefined;
 }
 
-export function startSession(db: Database.Database, input: StartInput): StartResult {
-  return db.transaction((): StartResult => {
+export function startSession(db: Db, input: StartInput): StartResult {
+  return transaction(db, (): StartResult => {
     expireAbandoned(db, input.now);
 
     const auth = verifyPin(db, input.tokenNumber, input.pin, input.now);
@@ -90,11 +90,11 @@ export function startSession(db: Database.Database, input: StartInput): StartRes
       throw err;
     }
     return { ok: true, sessionId, priceUgx };
-  }).immediate();
+  }, 'immediate');
 }
 
 // Abandons unpaid sessions idle for 24 hours (no charge). A paid session was delivered and charged, so it closes as complete.
-export function expireAbandoned(db: Database.Database, now: Date): number {
+export function expireAbandoned(db: Db, now: Date): number {
   const cutoff = new Date(now.getTime() - ABANDON_AFTER_MS).toISOString();
   const abandoned = db
     .prepare("update sessions set status = 'abandoned' where status = 'active' and paid = 0 and last_activity_at < ?")
@@ -102,16 +102,16 @@ export function expireAbandoned(db: Database.Database, now: Date): number {
   const closed = db
     .prepare("update sessions set status = 'complete' where status = 'active' and paid = 1 and last_activity_at < ?")
     .run(cutoff).changes;
-  return abandoned + closed;
+  return Number(abandoned) + Number(closed);
 }
 
 export type ConfirmResult =
   | { ok: true; bytesConfirmed: number }
   | { ok: false; reason: 'not_active' | 'offset_backwards' | 'offset_past_end' };
 
-export function confirmOffset(db: Database.Database, sessionId: string, offset: number, now: Date): ConfirmResult {
+export function confirmOffset(db: Db, sessionId: string, offset: number, now: Date): ConfirmResult {
   if (!Number.isInteger(offset) || offset < 0) throw new RangeError(`offset must be a non-negative integer, got ${offset}`);
-  return db.transaction((): ConfirmResult => {
+  return transaction(db, (): ConfirmResult => {
     const row = db
       .prepare('select status, expected_size, bytes_confirmed from sessions where id = ?')
       .get(sessionId) as { status: string; expected_size: number; bytes_confirmed: number } | undefined;
@@ -125,14 +125,14 @@ export function confirmOffset(db: Database.Database, sessionId: string, offset: 
       sessionId,
     );
     return { ok: true, bytesConfirmed: offset };
-  })();
+  });
 }
 
 export type PayResult = { ok: true } | { ok: false; reason: 'not_active' | 'unknown_session' | 'insufficient_balance' };
 
 // Charges the session once, when its last chunk is served. Repeat calls for a paid session are no-ops.
-export function payForLastChunk(db: Database.Database, sessionId: string, now: Date): PayResult {
-  return db.transaction((): PayResult => {
+export function payForLastChunk(db: Db, sessionId: string, now: Date): PayResult {
+  return transaction(db, (): PayResult => {
     const row = getSession(db, sessionId);
     if (!row) return { ok: false, reason: 'unknown_session' };
     if (row.status !== 'active') return { ok: false, reason: 'not_active' };
@@ -149,7 +149,7 @@ export function payForLastChunk(db: Database.Database, sessionId: string, now: D
     }
     db.prepare('update sessions set paid = 1, last_activity_at = ? where id = ?').run(now.toISOString(), sessionId);
     return { ok: true };
-  }).immediate();
+  }, 'immediate');
 }
 
 export type CompleteResult =
@@ -157,12 +157,12 @@ export type CompleteResult =
   | { ok: false; reason: 'not_active' | 'incomplete' | 'checksum_mismatch' | 'insufficient_balance' };
 
 export function completeSession(
-  db: Database.Database,
+  db: Db,
   sessionId: string,
   finalChecksum: string,
   now: Date,
 ): CompleteResult {
-  return db.transaction((): CompleteResult => {
+  return transaction(db, (): CompleteResult => {
     const row = db
       .prepare(
         `select s.status, s.paid, s.bytes_confirmed, s.expected_size, s.file_checksum, s.price_ugx, t.token_number
@@ -198,11 +198,11 @@ export function completeSession(
       sessionId,
     );
     return { ok: true, chargedUgx: row.paid ? 0 : row.price_ugx };
-  }).immediate();
+  }, 'immediate');
 }
 
 export function abandonSession(
-  db: Database.Database,
+  db: Db,
   sessionId: string,
   now: Date,
 ): { ok: true } | { ok: false; reason: 'not_active' | 'unknown_session' | 'already_paid' } {

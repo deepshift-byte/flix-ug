@@ -2,9 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { openDb } from '../src/db';
 
 function insertToken(db: ReturnType<typeof openDb>, tokenNumber = 'TOKEN00001') {
-  return db
-    .prepare("insert into tokens (token_number, pin_hash, created_at) values (?, 'x', '2026-10-29T10:00:00.000Z')")
-    .run(tokenNumber).lastInsertRowid as number;
+  return Number(
+    db
+      .prepare("insert into tokens (token_number, pin_hash, created_at) values (?, 'x', '2026-10-29T10:00:00.000Z')")
+      .run(tokenNumber).lastInsertRowid,
+  );
 }
 
 function insertSession(db: ReturnType<typeof openDb>, tokenId: number, id: string, status: string) {

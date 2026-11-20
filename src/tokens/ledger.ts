@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import { transaction, type Db } from '../db.js';
 
 export class InsufficientBalance extends Error {
   constructor(public readonly balanceUgx: number, public readonly requiredUgx: number) {
@@ -15,7 +15,7 @@ function requirePositiveInteger(amount: number): void {
   }
 }
 
-function findToken(db: Database.Database, tokenNumber: string): TokenRow {
+function findToken(db: Db, tokenNumber: string): TokenRow {
   const row = db.prepare('select id, balance_ugx from tokens where token_number = ?').get(tokenNumber) as
     | TokenRow
     | undefined;
@@ -23,9 +23,9 @@ function findToken(db: Database.Database, tokenNumber: string): TokenRow {
   return row;
 }
 
-export function topUp(db: Database.Database, tokenNumber: string, amountUgx: number, paymentRef: string): void {
+export function topUp(db: Db, tokenNumber: string, amountUgx: number, paymentRef: string): void {
   requirePositiveInteger(amountUgx);
-  db.transaction(() => {
+  transaction(db, () => {
     const token = findToken(db, tokenNumber);
     const existing = db
       .prepare("select id from ledger where type = 'top_up' and reference = ?")
@@ -42,12 +42,12 @@ export function topUp(db: Database.Database, tokenNumber: string, amountUgx: num
       tokenNumber,
       `${amountUgx} UGX ref ${paymentRef}`,
     );
-  })();
+  });
 }
 
-export function debit(db: Database.Database, tokenNumber: string, amountUgx: number, sessionId: string): void {
+export function debit(db: Db, tokenNumber: string, amountUgx: number, sessionId: string): void {
   requirePositiveInteger(amountUgx);
-  db.transaction(() => {
+  transaction(db, () => {
     const token = findToken(db, tokenNumber);
     // A repeat of an already-posted debit succeeds without posting again, even if the balance is now short.
     const existing = db.prepare("select id from ledger where type = 'debit' and reference = ?").get(sessionId);
@@ -65,9 +65,9 @@ export function debit(db: Database.Database, tokenNumber: string, amountUgx: num
       tokenNumber,
       `${amountUgx} UGX session ${sessionId}`,
     );
-  })();
+  });
 }
 
-export function getBalance(db: Database.Database, tokenNumber: string): number {
+export function getBalance(db: Db, tokenNumber: string): number {
   return findToken(db, tokenNumber).balance_ugx;
 }

@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import { transaction, type Db } from '../db.js';
 import { checkPin, hashPin } from './pin.js';
 import { generateTokenNumber } from './token-number.js';
 
@@ -18,7 +18,7 @@ type TokenRow = {
   locked_until: string | null;
 };
 
-export function createToken(db: Database.Database, pin: string): { tokenNumber: string } {
+export function createToken(db: Db, pin: string): { tokenNumber: string } {
   const pinHash = hashPin(pin);
   const createdAt = new Date().toISOString();
   const insert = db.prepare('insert into tokens (token_number, pin_hash, created_at) values (?, ?, ?)');
@@ -34,8 +34,8 @@ export function createToken(db: Database.Database, pin: string): { tokenNumber: 
   throw new Error('could not generate a unique token number');
 }
 
-export function verifyPin(db: Database.Database, tokenNumber: string, pin: string, now: Date): PinResult {
-  return db.transaction((): PinResult => {
+export function verifyPin(db: Db, tokenNumber: string, pin: string, now: Date): PinResult {
+  return transaction(db, (): PinResult => {
     const row = db
       .prepare('select id, pin_hash, status, failed_pin_attempts, locked_until from tokens where token_number = ?')
       .get(tokenNumber) as TokenRow | undefined;
@@ -66,5 +66,5 @@ export function verifyPin(db: Database.Database, tokenNumber: string, pin: strin
 
     db.prepare('update tokens set failed_pin_attempts = ? where id = ?').run(attempts, row.id);
     return { ok: false, reason: 'bad_pin' };
-  })();
+  });
 }

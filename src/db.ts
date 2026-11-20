@@ -1,15 +1,32 @@
-import Database from 'better-sqlite3';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
+import { readAsset } from './assets.js';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const schemaSql = readFileSync(join(here, 'schema.sql'), 'utf8');
+export type Db = DatabaseSync;
 
-export function openDb(path: string): Database.Database {
-  const db = new Database(path);
-  db.pragma('foreign_keys = ON');
-  if (path !== ':memory:') db.pragma('journal_mode = WAL');
-  db.exec(schemaSql);
+export function openDb(path: string): Db {
+  const db = new DatabaseSync(path);
+  db.exec('PRAGMA foreign_keys = ON');
+  if (path !== ':memory:') db.exec('PRAGMA journal_mode = WAL');
+  db.exec(readAsset('schema.sql'));
   return db;
+}
+
+const depth = new WeakMap<Db, number>();
+
+// Runs fn in a transaction. Nested calls use savepoints, so an inner failure rolls back only its own work.
+export function transaction<T>(db: Db, fn: () => T, mode: 'deferred' | 'immediate' = 'deferred'): T {
+  const level = depth.get(db) ?? 0;
+  const savepoint = `flix_sp_${level}`;
+  db.exec(level === 0 ? (mode === 'immediate' ? 'BEGIN IMMEDIATE' : 'BEGIN') : `SAVEPOINT ${savepoint}`);
+  depth.set(db, level + 1);
+  try {
+    const result = fn();
+    db.exec(level === 0 ? 'COMMIT' : `RELEASE ${savepoint}`);
+    return result;
+  } catch (err) {
+    db.exec(level === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
+    throw err;
+  } finally {
+    depth.set(db, level);
+  }
 }

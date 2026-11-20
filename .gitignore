@@ -6,3 +6,5 @@ dist/
 
 # Scratch and test directories created by this project tooling
 .superpowers/
+build/
+release/

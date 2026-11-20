@@ -1,8 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { closeSync, openSync, readFileSync, readSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import type Database from 'better-sqlite3';
+import { closeSync, openSync, readSync } from 'node:fs';
+import { readAsset } from '../assets.js';
+import type { Db } from '../db.js';
 import { isLanAddress } from './lan-only.js';
 import type { TitleCatalog } from '../catalog/title-catalog.js';
 import { CHUNK_SIZE, chunkCount } from '../download/chunks.js';
@@ -30,7 +29,7 @@ const COMPLETE_STATUS: Record<string, number> = {
 };
 
 export type AppOptions = {
-  db: Database.Database;
+  db: Db;
   signingSecret: Buffer;
   catalog: TitleCatalog;
   clock?: () => Date;
@@ -153,16 +152,15 @@ export function buildApp(opts: AppOptions): FastifyInstance {
     return { status: 'abandoned' };
   });
 
-  const phoneDir = fileURLToPath(new URL('../../public/phone/', import.meta.url));
   // The page imports its module relatively, so it must live at /phone/ to resolve /phone/assemble.js.
   app.get('/phone', async (_request, reply) => reply.redirect('/phone/'));
   const phonePages: [string[], string, string][] = [
-    [['/phone/'], 'index.html', 'text/html; charset=utf-8'],
-    [['/phone/assemble.js'], 'assemble.js', 'application/javascript; charset=utf-8'],
+    [['/phone/'], 'phone/index.html', 'text/html; charset=utf-8'],
+    [['/phone/assemble.js'], 'phone/assemble.js', 'application/javascript; charset=utf-8'],
   ];
   for (const [urls, file, type] of phonePages) {
     for (const url of urls) {
-      app.get(url, async (_request, reply) => reply.type(type).send(readFileSync(join(phoneDir, file))));
+      app.get(url, async (_request, reply) => reply.type(type).send(readAsset(file)));
     }
   }
 
