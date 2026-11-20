@@ -6,6 +6,8 @@ import { isLanAddress } from './lan-only.js';
 import type { TitleCatalog } from '../catalog/title-catalog.js';
 import { CHUNK_SIZE, chunkCount } from '../download/chunks.js';
 import { signLink, verifyLink } from '../download/signed-link.js';
+import { registerAdminRoutes } from './admin-routes.js';
+import { registerShopRoutes } from './shop-routes.js';
 import {
   abandonSession, completeSession, confirmOffset, getSession, payForLastChunk, startSession,
 } from '../sessions/session-service.js';
@@ -33,6 +35,10 @@ export type AppOptions = {
   signingSecret: Buffer;
   catalog: TitleCatalog;
   clock?: () => Date;
+  // Where attendant uploads (movies, posters, trailers) are stored.
+  mediaDir?: string;
+  // The attendant screen is enabled only when a password is given.
+  adminPassword?: string;
 };
 
 export function buildApp(opts: AppOptions): FastifyInstance {
@@ -162,6 +168,11 @@ export function buildApp(opts: AppOptions): FastifyInstance {
     for (const url of urls) {
       app.get(url, async (_request, reply) => reply.type(type).send(readAsset(file)));
     }
+  }
+
+  registerShopRoutes(app, { db, catalog, now });
+  if (opts.adminPassword && opts.mediaDir) {
+    registerAdminRoutes(app, { db, catalog, mediaDir: opts.mediaDir, adminPassword: opts.adminPassword, secret });
   }
 
   return app;

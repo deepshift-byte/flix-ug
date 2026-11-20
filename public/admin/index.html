@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FLIX-UG Attendant</title>
+  <style>
+    :root { --bg:#141414; --panel:#1d1d1d; --panel-2:#262626; --line:#333; --text:#e8e8e8; --muted:#a0a0a0; --red:#e50914; --ok:#46d369; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: "Segoe UI", Roboto, Arial, sans-serif; }
+    button, input, select, textarea { font: inherit; }
+    header { display: flex; align-items: center; gap: 24px; padding: 14px 28px; background: #0b0b0b; border-bottom: 1px solid var(--line); }
+    .brand { color: var(--red); font-weight: 900; font-size: 24px; text-decoration: none; }
+    .brand small { color: var(--muted); font-weight: 600; font-size: 14px; margin-left: 8px; }
+    nav { display: flex; gap: 6px; }
+    nav button { background: none; border: 0; color: var(--muted); padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; }
+    nav button.active { background: var(--panel-2); color: #fff; }
+    .spacer { flex: 1; }
+    header a.shop { color: var(--muted); text-decoration: none; }
+    main { max-width: 1100px; margin: 0 auto; padding: 28px; }
+    h2 { margin: 0 0 16px; font-size: 22px; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 22px; margin-bottom: 24px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; }
+    .field { display: grid; gap: 6px; }
+    .field.full { grid-column: 1 / -1; }
+    .field span { color: var(--muted); font-size: 13px; }
+    input, select, textarea { background: #2b2b2b; border: 1px solid #3c3c3c; color: #fff; border-radius: 4px; padding: 10px 12px; }
+    textarea { min-height: 80px; resize: vertical; }
+    input[type=file] { padding: 8px; }
+    .btn { border: 0; border-radius: 4px; padding: 10px 20px; font-weight: 700; cursor: pointer; }
+    .btn-primary { background: var(--red); color: #fff; }
+    .btn-primary:disabled { opacity: .5; cursor: progress; }
+    .btn-ghost { background: var(--panel-2); color: #fff; }
+    .btn-danger { background: none; color: #ff7b7b; border: 1px solid #5a2a2a; padding: 6px 12px; }
+    .row { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+    .note { color: var(--muted); font-size: 14px; line-height: 1.45; }
+    .error { color: #ff6b6b; }
+    .ok { color: var(--ok); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    th { color: var(--muted); font-weight: 600; font-size: 13px; }
+    td img { width: 40px; aspect-ratio: 2/3; object-fit: cover; border-radius: 3px; display: block; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 24px; }
+    .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px; }
+    .stat b { display: block; font-size: 30px; margin-top: 6px; }
+    .ticket { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; background: #fff; color: #111; border-radius: 8px; padding: 18px 22px; margin-top: 16px; }
+    .ticket span { display: block; font-size: 12px; color: #666; text-transform: uppercase; letter-spacing: .5px; }
+    .ticket b { font-size: 26px; font-family: Consolas, monospace; letter-spacing: 1px; }
+    .presets { display: flex; gap: 6px; }
+    .presets button { background: var(--panel-2); border: 1px solid #3c3c3c; color: #fff; border-radius: 4px; padding: 9px 12px; cursor: pointer; }
+    .progress { height: 6px; background: #333; border-radius: 3px; overflow: hidden; margin-top: 10px; }
+    .progress i { display: block; height: 100%; width: 0; background: var(--red); transition: width .15s; }
+    .login { max-width: 360px; margin: 12vh auto; }
+    [hidden] { display: none !important; }
+    @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } header { flex-wrap: wrap; } .ticket { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <section class="login panel" id="login" hidden>
+    <h2>Attendant login</h2>
+    <form id="login-form">
+      <label class="field"><span>Password (shown in the FLIX-UG window)</span><input id="password" type="password" autocomplete="current-password" required></label>
+      <p class="error" id="login-error" hidden>Wrong password.</p>
+      <p><button class="btn btn-primary" type="submit">Log in</button></p>
+    </form>
+  </section>
+
+  <div id="app" hidden>
+    <header>
+      <a class="brand" href="/admin">FLIX-UG<small>Attendant</small></a>
+      <nav>
+        <button data-tab="titles" class="active">Movies</button>
+        <button data-tab="tokens">Tokens</button>
+        <button data-tab="downloads">Downloads</button>
+      </nav>
+      <div class="spacer"></div>
+      <a class="shop" href="/" target="_blank">Open the shop screen ↗</a>
+    </header>
+
+    <main>
+      <section data-panel="titles">
+        <div class="panel">
+          <h2>Add a movie or series</h2>
+          <form id="title-form" class="grid2">
+            <label class="field"><span>Name</span><input name="name" required></label>
+            <label class="field"><span>Genre</span><input name="genre" list="genres" placeholder="e.g. Action"></label>
+            <label class="field"><span>Type</span>
+              <select name="kind" id="kind"><option value="movie">Movie (1,000 UGX)</option><option value="series">TV series</option></select>
+            </label>
+            <label class="field" id="episodes-field" hidden><span>Episodes (more than 10 costs 2,000 UGX)</span><input name="episodes" type="number" min="1" value="10"></label>
+            <label class="field"><span>Year</span><input name="year" type="number" min="1900" max="2100"></label>
+            <label class="field full"><span>Description</span><textarea name="description"></textarea></label>
+            <label class="field"><span>Movie file (required)</span><input name="movie" type="file" required></label>
+            <label class="field"><span>Poster image</span><input name="poster" type="file" accept="image/*"></label>
+            <label class="field"><span>Trailer video</span><input name="trailer" type="file" accept="video/*"></label>
+            <div class="field full">
+              <div class="row"><button class="btn btn-primary" type="submit" id="title-submit">Add to the shop</button><span class="note" id="title-status"></span></div>
+              <div class="progress" id="title-progress" hidden><i></i></div>
+            </div>
+          </form>
+          <datalist id="genres">
+            <option>Action</option><option>Comedy</option><option>Drama</option><option>Horror</option><option>Romance</option>
+            <option>Thriller</option><option>Animation</option><option>Documentary</option><option>Nollywood</option><option>Ugandan</option>
+          </datalist>
+        </div>
+        <div class="panel">
+          <h2>In the shop</h2>
+          <table><thead><tr><th></th><th>Name</th><th>Genre</th><th>Price</th><th>Size</th><th>Trailer</th><th>Downloads</th><th></th></tr></thead>
+            <tbody id="titles-body"></tbody></table>
+        </div>
+      </section>
+
+      <section data-panel="tokens" hidden>
+        <div class="panel">
+          <h2>Sell a token</h2>
+          <form id="sell-form" class="row">
+            <label class="field"><span>Amount (UGX)</span><input id="sell-amount" type="number" min="1000" step="500" value="5000" required></label>
+            <div class="presets"><button type="button" data-amount="1000">1,000</button><button type="button" data-amount="2000">2,000</button><button type="button" data-amount="5000">5,000</button><button type="button" data-amount="10000">10,000</button></div>
+            <label class="field"><span>PIN (leave empty for a random one)</span><input id="sell-pin" inputmode="numeric" pattern="\d{4,6}" placeholder="4–6 digits"></label>
+            <button class="btn btn-primary" type="submit">Sell token</button>
+          </form>
+          <div id="ticket"></div>
+        </div>
+        <div class="panel">
+          <h2>Top up a token</h2>
+          <form id="topup-form" class="row">
+            <label class="field"><span>Token number</span><input id="topup-token" required></label>
+            <label class="field"><span>Amount (UGX)</span><input id="topup-amount" type="number" min="500" step="500" value="2000" required></label>
+            <button class="btn btn-primary" type="submit">Top up</button>
+            <span class="note" id="topup-status"></span>
+          </form>
+        </div>
+        <div class="panel">
+          <h2>Recent tokens</h2>
+          <table><thead><tr><th>Token</th><th>Balance</th><th>Downloads</th><th>Sold</th></tr></thead><tbody id="tokens-body"></tbody></table>
+        </div>
+      </section>
+
+      <section data-panel="downloads" hidden>
+        <div class="stats">
+          <div class="stat">Movies downloaded<b id="stat-downloads">0</b></div>
+          <div class="stat">Money earned from downloads<b id="stat-revenue">0 UGX</b></div>
+          <div class="stat">Titles in the shop<b id="stat-titles">0</b></div>
+        </div>
+        <div class="panel">
+          <h2>Downloads per title</h2>
+          <table><thead><tr><th>Name</th><th>Genre</th><th>Price</th><th>Downloads</th></tr></thead><tbody id="downloads-body"></tbody></table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/admin/admin.js"></script>
+</body>
+</html>

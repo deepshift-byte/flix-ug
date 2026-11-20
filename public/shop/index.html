@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FLIX-UG</title>
+  <link rel="stylesheet" href="/shop/shop.css">
+</head>
+<body>
+  <header class="topbar" id="topbar">
+    <a class="brand" href="/">FLIX-UG</a>
+    <nav class="nav" aria-label="Browse">
+      <button class="nav-link active" data-filter="all">Home</button>
+      <button class="nav-link" data-filter="movie">Movies</button>
+      <button class="nav-link" data-filter="series">Series</button>
+    </nav>
+    <div class="spacer"></div>
+    <label class="search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4a6 6 0 1 0 3.9 10.6l4.7 4.7 1.4-1.4-4.7-4.7A6 6 0 0 0 10 4Zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg>
+      <input id="search" type="search" placeholder="Titles, genres" autocomplete="off" aria-label="Search titles">
+    </label>
+    <button class="cart-button" id="cart-button" aria-label="Open cart">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm10 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM5.2 4l.6 3H21l-2 8H7.4L5.2 4H2V2h4.8l.5 2H5.2Z"/></svg>
+      <span class="cart-count" id="cart-count">0</span>
+    </button>
+  </header>
+
+  <main>
+    <section class="hero" id="hero" aria-label="Featured"></section>
+    <div class="rows" id="rows"></div>
+    <section class="results" id="results" hidden>
+      <h2 class="row-title" id="results-title">Results</h2>
+      <div class="grid" id="results-grid"></div>
+    </section>
+    <p class="empty" id="empty" hidden>No titles yet. The attendant can add movies on the attendant screen (<code>/admin</code>).</p>
+  </main>
+
+  <div class="modal" id="details" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="details-title">
+      <button class="modal-close" data-close aria-label="Close">&times;</button>
+      <div class="details-media" id="details-media"></div>
+      <div class="details-body" id="details-body"></div>
+    </div>
+  </div>
+
+  <aside class="drawer" id="cart" hidden aria-label="Cart">
+    <div class="drawer-backdrop" data-close-cart></div>
+    <div class="drawer-panel">
+      <div class="drawer-head">
+        <h2>Your cart</h2>
+        <button class="modal-close" data-close-cart aria-label="Close cart">&times;</button>
+      </div>
+      <ul class="cart-items" id="cart-items"></ul>
+      <div class="drawer-foot">
+        <div class="cart-total"><span>Total</span><strong id="cart-total">0 UGX</strong></div>
+        <button class="btn btn-primary btn-block" id="checkout-button" disabled>Checkout with token</button>
+      </div>
+    </div>
+  </aside>
+
+  <div class="modal" id="checkout" hidden>
+    <div class="modal-backdrop" data-close-checkout></div>
+    <div class="modal-panel checkout-panel" role="dialog" aria-modal="true" aria-labelledby="checkout-title">
+      <button class="modal-close" data-close-checkout aria-label="Close">&times;</button>
+      <h2 id="checkout-title">Checkout</h2>
+      <div id="checkout-step"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script type="module" src="/shop/shop.js"></script>
+</body>
+</html>

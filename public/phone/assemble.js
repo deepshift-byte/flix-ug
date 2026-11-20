@@ -14,9 +14,14 @@ export class StorageFullError extends Error {
   }
 }
 
+// WebCrypto exists only on secure pages (localhost or https). A phone on the shop Wi-Fi opens the page
+// over plain http, so fall back to the JavaScript SHA-256 below.
 async function sha256Hex(buffer) {
-  const digest = await crypto.subtle.digest('SHA-256', buffer);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  if (globalThis.crypto?.subtle) {
+    const digest = await crypto.subtle.digest('SHA-256', buffer);
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  return new Sha256().update(buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)).hex();
 }
 
 const keyFor = (sessionId, index) => `${sessionId}:${String(index).padStart(6, '0')}`;

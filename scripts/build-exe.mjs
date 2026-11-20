@@ -35,6 +35,12 @@ writeFileSync(`${OUT}/sea-config.json`, JSON.stringify({
     'schema.sql': 'src/schema.sql',
     'phone/index.html': 'public/phone/index.html',
     'phone/assemble.js': 'public/phone/assemble.js',
+    'shop/index.html': 'public/shop/index.html',
+    'shop/shop.css': 'public/shop/shop.css',
+    'shop/shop.js': 'public/shop/shop.js',
+    'shop/demo-trailer.webm': 'public/shop/demo-trailer.webm',
+    'admin/index.html': 'public/admin/index.html',
+    'admin/admin.js': 'public/admin/admin.js',
   },
 }, null, 2));
 execFileSync(process.execPath, ['--experimental-sea-config', `${OUT}/sea-config.json`], { stdio: 'inherit' });

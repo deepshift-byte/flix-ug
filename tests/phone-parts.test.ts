@@ -156,3 +156,18 @@ describe('holding at a finished part until it is saved', () => {
     expect((await partBlob(store, 's1', 0, COUNT)).size).toBe(64 * CHUNK);
   });
 });
+
+describe('hashing without WebCrypto (phone on plain http)', () => {
+  it('still verifies and stores chunks when crypto.subtle is unavailable', async () => {
+    const subtle = Object.getOwnPropertyDescriptor(globalThis.crypto, 'subtle');
+    Object.defineProperty(globalThis.crypto, 'subtle', { value: undefined, configurable: true });
+    try {
+      const store = memoryStore();
+      expect(await downloadNextChunk(store, opts('s1'))).toMatchObject({ ok: true, index: 0 });
+      const bad = [...hashes]; bad[1] = 'wrong';
+      expect(await downloadNextChunk(store, opts('s1', { chunkHashes: bad }))).toEqual({ ok: false, reason: 'hash_failed' });
+    } finally {
+      if (subtle) Object.defineProperty(globalThis.crypto, 'subtle', subtle);
+    }
+  });
+});

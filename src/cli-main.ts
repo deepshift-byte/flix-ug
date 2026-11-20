@@ -7,7 +7,8 @@ import { createInterface } from 'node:readline';
 import * as sea from 'node:sea';
 import { openDb, type Db } from './db.js';
 import { buildApp } from './http/app.js';
-import { catalogFromEntries, type TitleEntry } from './catalog/title-catalog.js';
+import { jsonCatalog, type TitleCatalog, type TitleEntry } from './catalog/title-catalog.js';
+import { readAssetBytes } from './assets.js';
 import { describeMovieFile } from './catalog/describe-file.js';
 import { createToken } from './tokens/token-service.js';
 import { getBalance, topUp } from './tokens/ledger.js';
@@ -44,16 +45,7 @@ function option(args: string[], name: string): string | undefined {
   return value;
 }
 
-const catalogPath = (home: string) => join(home, 'catalog.json');
-
-function readCatalog(home: string): TitleEntry[] {
-  const path = catalogPath(home);
-  return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as TitleEntry[]) : [];
-}
-
-function writeCatalog(home: string, entries: TitleEntry[]): void {
-  writeFileSync(catalogPath(home), JSON.stringify(entries, null, 2));
-}
+const openCatalog = (home: string) => jsonCatalog(join(home, 'catalog.json'));
 
 function openHome(): { home: string; db: Db } {
   const home = dataHome();
@@ -76,17 +68,64 @@ function sellToken(db: Db, amount: number, pin: string): string {
   return tokenNumber;
 }
 
-async function ensureDemoMovie(home: string): Promise<TitleEntry[]> {
-  const entries = readCatalog(home);
-  if (entries.length > 0) return entries;
+const DEMO_TITLES: Omit<TitleEntry, 'filePath' | 'fileSize' | 'chunkHashes' | 'fileChecksum'>[] = [
+  { titleId: 'demo-kampala-nights', name: 'Kampala Nights', kind: 'movie', episodes: 1, year: 2025, genre: 'Drama',
+    description: 'On his last night driving a taxi through Kampala, Musa picks up a passenger who knows far too much about him.' },
+  { titleId: 'demo-the-last-boda', name: 'The Last Boda', kind: 'movie', episodes: 1, year: 2024, genre: 'Action',
+    description: 'A boda boda rider caught between two gangs has one night to deliver a package that both sides want.' },
+  { titleId: 'demo-rwenzori-rising', name: 'Rwenzori Rising', kind: 'movie', episodes: 1, year: 2023, genre: 'Adventure',
+    description: 'Three friends attempt the Mountains of the Moon in the rainy season, and the mountain has other plans.' },
+  { titleId: 'demo-matooke-money', name: 'Matooke Money', kind: 'movie', episodes: 1, year: 2025, genre: 'Comedy',
+    description: 'A market trader accidentally becomes the most famous investor in town. Nobody, least of all him, knows why.' },
+  { titleId: 'demo-nile-runners', name: 'Nile Runners', kind: 'series', episodes: 12, year: 2024, genre: 'Action',
+    description: 'Twelve episodes of smugglers, river police and one stubborn fisherman on the source of the Nile.' },
+  { titleId: 'demo-silent-city', name: 'Silent City', kind: 'movie', episodes: 1, year: 2022, genre: 'Thriller',
+    description: 'When every phone in the city goes dead, a radio presenter is the only voice people can hear.' },
+  { titleId: 'demo-lake-victoria', name: 'Lake Victoria Secrets', kind: 'movie', episodes: 1, year: 2024, genre: 'Romance',
+    description: 'Two families, one island, and a wedding that nobody agreed to.' },
+  { titleId: 'demo-code-breakers', name: 'Code Breakers', kind: 'series', episodes: 8, year: 2025, genre: 'Drama',
+    description: 'Eight episodes following students at a Kampala coding school as they build an app that could change everything.' },
+  { titleId: 'demo-market-day', name: 'Market Day', kind: 'movie', episodes: 1, year: 2023, genre: 'Comedy',
+    description: 'Everything that can go wrong at Owino market goes wrong on the busiest day of the year.' },
+  { titleId: 'demo-shadow-protocol', name: 'Shadow Protocol', kind: 'movie', episodes: 1, year: 2025, genre: 'Thriller',
+    description: 'A retired agent is pulled back for one job: find the leak before the summit begins.' },
+];
+
+// First run, or an older build's single bare "demo-movie": fill the shop with demo titles so there is something to browse.
+async function ensureDemoCatalog(home: string, catalog: TitleCatalog): Promise<void> {
+  const entries = catalog.list();
+  const onlyOldDemo = entries.length === 1 && entries[0].titleId === 'demo-movie' && !entries[0].name;
+  if (entries.length > 0 && !onlyOldDemo) return;
+  if (onlyOldDemo) catalog.remove('demo-movie');
+
   // Test data, not a playable video: 12 MB spans three 4 MB chunks, enough to see resume and charging work.
-  const path = join(home, 'demo-movie.mp4');
-  const content = Buffer.alloc(12 * 1024 * 1024 + 321);
-  for (let i = 0; i < content.length; i++) content[i] = (i * 31 + 7) & 0xff;
-  writeFileSync(path, content);
-  const demo = await describeMovieFile(path, { titleId: 'demo-movie', kind: 'movie', episodes: 1 });
-  writeCatalog(home, [demo]);
-  return [demo];
+  const moviePath = join(home, 'demo-movie.mp4');
+  if (!existsSync(moviePath)) {
+    const content = Buffer.alloc(12 * 1024 * 1024 + 321);
+    for (let i = 0; i < content.length; i++) content[i] = (i * 31 + 7) & 0xff;
+    writeFileSync(moviePath, content);
+  }
+  const media = join(home, 'media');
+  mkdirSync(media, { recursive: true });
+  const trailerPath = join(media, 'demo-trailer.webm');
+  writeFileSync(trailerPath, readAssetBytes('shop/demo-trailer.webm'));
+
+  const described = await describeMovieFile(moviePath, { titleId: 'demo', kind: 'movie', episodes: 1 });
+  DEMO_TITLES.forEach((t, i) => {
+    catalog.upsert({
+      ...described, ...t, trailerPath,
+      addedAt: new Date(Date.now() - i * 3_600_000).toISOString(),
+    });
+  });
+}
+
+function adminPassword(home: string): string {
+  const path = join(home, 'admin-password.txt');
+  if (!existsSync(path)) {
+    const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+    writeFileSync(path, Array.from({ length: 8 }, () => alphabet[randomInt(0, alphabet.length)]).join('') + '\n');
+  }
+  return readFileSync(path, 'utf8').trim();
 }
 
 function ensureDemoToken(home: string, db: Db): { tokenNumber: string; pin: string } {
@@ -125,25 +164,26 @@ function openBrowser(url: string): void {
 async function serve(args: string[]): Promise<void> {
   const noBrowser = args.includes('--no-browser');
   const { home, db } = openHome();
-  const entries = await ensureDemoMovie(home);
+  const catalog = openCatalog(home);
+  await ensureDemoCatalog(home, catalog);
   const demo = ensureDemoToken(home, db);
+  const password = adminPassword(home);
   const port = Number(process.env.FLIX_PORT ?? 8080);
-  const app = buildApp({ db, signingSecret: signingSecret(home), catalog: catalogFromEntries(entries) });
+  const app = buildApp({
+    db, signingSecret: signingSecret(home), catalog, mediaDir: join(home, 'media'), adminPassword: password,
+  });
   await app.listen({ port, host: '0.0.0.0' });
 
-  const phoneUrl = `http://localhost:${port}/phone/`;
+  const shopUrl = `http://localhost:${port}/`;
   console.log(`\nFLIX-UG ${VERSION} is running.  Data folder: ${home}\n`);
-  console.log('Movies in the catalog:');
-  for (const t of entries) {
-    console.log(`  ${t.titleId}  (${(t.fileSize / 1048576).toFixed(1)} MB, ${priceFor(t.kind, t.episodes)} UGX)`);
-  }
+  console.log(`Shop screen (customers):     ${shopUrl}`);
+  console.log(`Attendant screen:            http://localhost:${port}/admin     password: ${password}`);
+  for (const ip of lanAddresses()) console.log(`From a phone on the same Wi-Fi: http://${ip}:${port}/`);
   console.log(`\nDemo token: ${demo.tokenNumber}   PIN: ${demo.pin}   Balance: ${getBalance(db, demo.tokenNumber)} UGX`);
-  console.log(`\nPhone download page on this PC:   ${phoneUrl}`);
-  for (const ip of lanAddresses()) console.log(`From a phone on the same Wi-Fi:  http://${ip}:${port}/phone/`);
-  console.log(`\nCopy to a flash disk (in a second window):`);
-  console.log(`  flix-ug kiosk E:\\ ${demo.tokenNumber} ${demo.pin} demo-movie`);
-  console.log('\nPress Ctrl+C to stop the server.\n');
-  if (!noBrowser) openBrowser(phoneUrl);
+  console.log(`${catalog.list().length} titles in the shop. Add your own on the attendant screen.`);
+  console.log('\nTo copy to a flash disk, use Google Chrome or Microsoft Edge on this PC.');
+  console.log('Keep this window open while the shop is in use. Press Ctrl+C to stop.\n');
+  if (!noBrowser) openBrowser(shopUrl);
 }
 
 async function addMovie(args: string[]): Promise<void> {
@@ -158,7 +198,7 @@ async function addMovie(args: string[]): Promise<void> {
   console.log(`Reading ${path} ...`);
   const entry = await describeMovieFile(path, { titleId, kind, episodes });
   const { home } = openHome();
-  writeCatalog(home, [...readCatalog(home).filter((t) => t.titleId !== titleId), entry]);
+  openCatalog(home).upsert({ ...entry, name: titleOpt ?? basename(path).replace(/\.[^.]+$/, ''), addedAt: new Date().toISOString() });
   console.log(`Added "${titleId}" (${(entry.fileSize / 1048576).toFixed(1)} MB, ${priceFor(kind, episodes)} UGX).`);
   console.log('Restart the server to offer it.');
 }

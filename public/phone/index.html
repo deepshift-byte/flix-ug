@@ -192,6 +192,11 @@
       await run(data, titleId);
     });
 
+    // Arriving from the storefront: fill in the title and token, so only the PIN is left to type.
+    const params = new URLSearchParams(location.search);
+    if (params.get('title')) $('title').value = params.get('title');
+    if (params.get('token')) $('token').value = params.get('token');
+
     // Reopening the page resumes an unfinished download.
     const unfinished = recalledSession();
     if (unfinished) {
